@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openproctor"
+version = "0.1.0"
+description = "Open-source exam recording audit tool that detects cheating via OCR + local VLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "OpenProctor Contributors"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education :: Testing",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.24.0",
+    "Pillow>=10.0.0",
+    "opencv-python-headless>=4.8.0",
+    "scikit-image>=0.22.0",
+    "imagehash>=4.3.0",
+    "easyocr>=1.7.0",
+    "httpx>=0.25.0",
+    "streamlit>=1.28.0",
+    "python-multipart>=0.0.6",
+    "typer>=0.9.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "loguru>=0.7.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/anomalyco/open-proctor"
+Source = "https://github.com/anomalyco/open-proctor"
+
+[project.scripts]
+openproctor = "openproctor.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]
+gpu = [
+    "torch>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["openproctor*"]
+
+[tool.setuptools.package-data]
+openproctor = ["py.typed"]

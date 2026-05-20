@@ -46,7 +46,7 @@ class FrameExtractor:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def extract(self) -> dict:
+    def extract(self, progress=None) -> dict:
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
             raise RuntimeError(f"Cannot open video: {self.video_path}")
@@ -54,10 +54,11 @@ class FrameExtractor:
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration_sec = total_frames / fps
+        total_jumps = int(duration_sec // self.jump_sec) + 1
 
         logger.info(f"Video       : {self.video_path.name}")
         logger.info(f"Duration    : {duration_sec:.1f}s  ({total_frames} frames @ {fps:.2f} fps)")
-        logger.info(f"Jump every  : {self.jump_sec}s")
+        logger.info(f"Jump every  : {self.jump_sec}s  ({total_jumps} jumps)")
         logger.info(f"Output dir  : {self.output_dir}")
 
         prev = None
@@ -65,8 +66,14 @@ class FrameExtractor:
         skipped_similar = 0
         skipped_unreadable = 0
         sec = 0.0
+        jumps_done = 0
 
         while sec < duration_sec:
+            jumps_done += 1
+            if progress:
+                progress(jumps_done / total_jumps)
+            if jumps_done % 10 == 1 or jumps_done == total_jumps:
+                logger.info(f"  Frame {jumps_done}/{total_jumps}  ({sec:.0f}s)")
             cap.set(cv2.CAP_PROP_POS_MSEC, sec * 1000.0)
             ret, frame = cap.read()
             if not ret:

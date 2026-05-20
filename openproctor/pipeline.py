@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -7,7 +8,11 @@ from loguru import logger
 
 from openproctor.analysis.ocr_triage import OcrTriage
 from openproctor.video.extractor import FrameExtractor
-from openproctor.vlm.ollama_client import OllamaVLM
+from openproctor.vlm.ollama_client import (
+    AggregationStrategy,
+    VLMConfig,
+    OllamaVLM,
+)
 
 
 def _parse_timestamp(filename: str) -> str:
@@ -15,6 +20,18 @@ def _parse_timestamp(filename: str) -> str:
     if m:
         return f"{int(m.group(1))}m {int(m.group(2))}s"
     return filename
+
+
+def _unique_dir(base: Path) -> Path:
+    if not base.exists():
+        return base
+    stem = base.stem
+    parent = base.parent
+    for i in range(1, 999):
+        candidate = parent / f"{stem}_{i}"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Cannot find available directory name for {base}")
 
 
 class Pipeline:
@@ -26,7 +43,10 @@ class Pipeline:
         report_path: str | Path | None = None,
         jump_sec: int = 5,
         ocr_gpu: bool = True,
-        vlm_model: str = "moondream",
+        ocr_batch_size: int = 16,
+        ocr_preprocessing: str = "none",
+        vlm_model: str | list[VLMConfig] = "moondream",
+        vlm_strategy: str = "single",
     ):
         self.video_path = Path(video_path)
         stem = self.video_path.stem
@@ -35,18 +55,34 @@ class Pipeline:
         self.report_path = Path(report_path) if report_path else Path(f"data/reports/{stem}_report.json")
         self.jump_sec = jump_sec
         self.ocr_gpu = ocr_gpu
+        self.ocr_batch_size = ocr_batch_size
+        self.ocr_preprocessing = ocr_preprocessing
         self.vlm_model = vlm_model
+        self.vlm_strategy = vlm_strategy
 
     def run(self, progress=None) -> dict:
+        original_interim = self.interim_dir
+        original_suspects = self.suspects_dir
+        self.interim_dir = _unique_dir(self.interim_dir)
+        self.suspects_dir = _unique_dir(self.suspects_dir)
+        if self.interim_dir != original_interim:
+            logger.info(f"Renaming interim dir → {self.interim_dir.name}")
+        if self.suspects_dir != original_suspects:
+            logger.info(f"Renaming suspects dir → {self.suspects_dir.name}")
+
         if progress:
             progress("extraction", 0.0, "Extrayendo frames ...")
+
+        def _on_extract(pct):
+            if progress:
+                progress("extraction", pct, f"Extrayendo frames ... {pct*100:.0f}%")
 
         fe = FrameExtractor(
             video_path=self.video_path,
             output_dir=self.interim_dir,
             jump_sec=self.jump_sec,
         )
-        stats = fe.extract()
+        stats = fe.extract(progress=_on_extract)
         n_frames = stats["saved"]
         if progress:
             progress("extraction", 1.0, f"{n_frames} frames extraídos")
@@ -57,16 +93,36 @@ class Pipeline:
         if progress:
             progress("ocr", 0.0, "Analizando con OCR ...")
 
-        ocr = OcrTriage(gpu=self.ocr_gpu)
-        suspects = ocr.run_triage(
-            interim_dir=self.interim_dir,
-            suspects_dir=self.suspects_dir,
-        )
+        def _on_ocr(pct):
+            if progress:
+                progress("ocr", pct, f"Analizando con OCR ... {pct*100:.0f}%")
+
+        ocr_ok = False
+        ocr_error = None
+        suspects = []
+        try:
+            ocr = OcrTriage(
+                gpu=self.ocr_gpu,
+                batch_size=self.ocr_batch_size,
+                preprocessing=self.ocr_preprocessing,
+            )
+            suspects = ocr.run_triage(
+                interim_dir=self.interim_dir,
+                suspects_dir=self.suspects_dir,
+                progress=_on_ocr,
+            )
+            ocr_ok = True
+        except Exception as e:
+            ocr_error = str(e)
+            logger.warning(f"OCR analysis failed: {ocr_error}")
+            if progress:
+                progress("ocr", 1.0, f"OCR no disponible — reporte basado solo en extracción")
+
         n_suspects = len(suspects)
         if progress:
             progress("ocr", 1.0, f"{n_suspects} sospechoso(s) detectados")
 
-        if n_suspects == 0:
+        if not ocr_ok or n_suspects == 0:
             empty = {
                 "video": self.video_path.name,
                 "timestamp": datetime.now().isoformat(),
@@ -74,6 +130,7 @@ class Pipeline:
                     "total_frames_extracted": n_frames,
                     "suspects_found": 0,
                     "infractions_confirmed": 0,
+                    "ocr_error": ocr_error,
                 },
                 "infractions": [],
             }
@@ -85,15 +142,19 @@ class Pipeline:
         verdicts = []
         vlm_ok = False
         try:
-            vlm = OllamaVLM(model=self.vlm_model)
+            vlm = OllamaVLM(
+                model=self.vlm_model,
+                strategy=self.vlm_strategy,
+            )
             verdicts = vlm.analyse_directory(suspects_dir=self.suspects_dir)
             vlm_ok = True
             if progress:
                 progress("vlm", 1.0, f"{len(verdicts)} frame(s) analizados por VLM")
         except Exception as e:
             logger.warning(f"VLM analysis failed, report will be OCR-only: {e}")
+            err_msg = str(e)[:100]
             if progress:
-                progress("vlm", 1.0, f"VLM no disponible — reporte basado solo en OCR")
+                progress("vlm", 1.0, f"VLM: {err_msg}")
 
         report = self._build_report(n_frames, suspects, verdicts, vlm_ok=vlm_ok)
         return self._report(report)
@@ -124,18 +185,22 @@ class Pipeline:
             if not v.get("infraction", False):
                 continue
 
-            infractions.append(
-                {
-                    "file": str(sp),
-                    "timestamp": _parse_timestamp(name),
-                    "keyword": (f_item.get("keywords") or [None])[0],
-                    "ocr_text": (f_item.get("ocr_text") or "")[:200],
-                    "infraction": True,
-                    "reason": v.get("reason", ""),
-                }
-            )
+            infraction_entry = {
+                "file": str(sp),
+                "timestamp": _parse_timestamp(name),
+                "keyword": (f_item.get("keywords") or [None])[0],
+                "ocr_text": (f_item.get("ocr_text") or "")[:200],
+                "infraction": True,
+                "reason": v.get("reason", ""),
+            }
 
-        return {
+            per_model = v.get("per_model")
+            if per_model:
+                infraction_entry["per_model"] = per_model
+
+            infractions.append(infraction_entry)
+
+        report = {
             "video": self.video_path.name,
             "timestamp": datetime.now().isoformat(),
             "vlm_available": vlm_ok,
@@ -146,6 +211,19 @@ class Pipeline:
             },
             "infractions": infractions,
         }
+
+        strategy_used = None
+        models_used = set()
+        for v in verdict_map.values():
+            if v.get("per_model"):
+                strategy_used = v.get("strategy", "single")
+                for m in v["per_model"]:
+                    models_used.add(m.get("model", ""))
+        if strategy_used:
+            report["vlm_strategy"] = strategy_used
+            report["vlm_models"] = sorted(models_used)
+
+        return report
 
     def _report(self, data: dict) -> dict:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)

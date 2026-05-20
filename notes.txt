@@ -1,0 +1,7 @@
+Prompts pendientes:
+
+- Añade un botón a la version web de forma que permita refrescar la lista de videos pendientes en la carpeta input.
+
+- Cuando se empiezan a procesar los videos, por cada uno de los videos, además de especificar la fas que se está ejecutando en el momento (p.e. Extrayendo frames), debería aparecer un porcentaje de cuanto de procesado está ese video
+
+- Añade la posibilidad de que se pueda detener la ejecución y "guardar" el estado en ese punto para despues seguir ejecutandola

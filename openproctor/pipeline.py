@@ -21,17 +21,18 @@ class Pipeline:
     def __init__(
         self,
         video_path: str | Path,
-        interim_dir: str | Path = "data/interim",
-        suspects_dir: str | Path = "data/suspects",
-        report_path: str | Path = "data/reports/report.json",
+        interim_dir: str | Path | None = None,
+        suspects_dir: str | Path | None = None,
+        report_path: str | Path | None = None,
         jump_sec: int = 5,
         ocr_gpu: bool = True,
         vlm_model: str = "moondream",
     ):
         self.video_path = Path(video_path)
-        self.interim_dir = Path(interim_dir)
-        self.suspects_dir = Path(suspects_dir)
-        self.report_path = Path(report_path)
+        stem = self.video_path.stem
+        self.interim_dir = Path(interim_dir) if interim_dir else Path(f"data/interim/{stem}")
+        self.suspects_dir = Path(suspects_dir) if suspects_dir else Path(f"data/suspects/{stem}")
+        self.report_path = Path(report_path) if report_path else Path(f"data/reports/{stem}_report.json")
         self.jump_sec = jump_sec
         self.ocr_gpu = ocr_gpu
         self.vlm_model = vlm_model
@@ -79,14 +80,22 @@ class Pipeline:
             return self._report(empty)
 
         if progress:
-            progress("vlm", 0.0, "Confirmando con VLM (Ollama) ...")
+            progress("vlm", 0.0, "Confirmando con VLM (Ollama) …")
 
-        vlm = OllamaVLM(model=self.vlm_model)
-        verdicts = vlm.analyse_directory(suspects_dir=self.suspects_dir)
-        if progress:
-            progress("vlm", 1.0, f"{len(verdicts)} frame(s) analizados por VLM")
+        verdicts = []
+        vlm_ok = False
+        try:
+            vlm = OllamaVLM(model=self.vlm_model)
+            verdicts = vlm.analyse_directory(suspects_dir=self.suspects_dir)
+            vlm_ok = True
+            if progress:
+                progress("vlm", 1.0, f"{len(verdicts)} frame(s) analizados por VLM")
+        except Exception as e:
+            logger.warning(f"VLM analysis failed, report will be OCR-only: {e}")
+            if progress:
+                progress("vlm", 1.0, f"VLM no disponible — reporte basado solo en OCR")
 
-        report = self._build_report(n_frames, suspects, verdicts)
+        report = self._build_report(n_frames, suspects, verdicts, vlm_ok=vlm_ok)
         return self._report(report)
 
     # ------------------------------------------------------------------
@@ -97,6 +106,7 @@ class Pipeline:
         n_frames: int,
         suspect_paths: list[Path],
         verdicts: list[dict],
+        vlm_ok: bool = False,
     ) -> dict:
         verdict_map = {Path(v["file"]).name: v for v in verdicts}
         findings_path = self.suspects_dir / "findings.json"
@@ -128,6 +138,7 @@ class Pipeline:
         return {
             "video": self.video_path.name,
             "timestamp": datetime.now().isoformat(),
+            "vlm_available": vlm_ok,
             "summary": {
                 "total_frames_extracted": n_frames,
                 "suspects_found": len(suspect_paths),

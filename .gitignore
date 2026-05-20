@@ -7,10 +7,10 @@ __pycache__/
 dist/
 build/
 
-# Data (generated)
-data/input/
-data/frames/
-data/suspicious/
+# Data (generated / large files)
+data/input/*.mp4
+data/interim/
+data/suspects/
 data/reports/
 data/logs/
 

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import streamlit as st
@@ -143,6 +144,79 @@ def _load_report(report_path: Path) -> dict:
     if report_path and report_path.exists():
         return json.loads(report_path.read_text())
     return {}
+
+
+def _find_frames_dir(base: Path, stem: str) -> Path | None:
+    candidates = sorted(base.glob(f"{stem}*"))
+    for c in reversed(candidates):
+        if c.is_dir() and any(True for _ in c.glob("*.jpg")):
+            return c
+    return None
+
+
+def _parse_timestamp(name: str) -> str:
+    m = re.search(r"min_(\d+)_seg_(\d+)", name)
+    return f"{m.group(1)}m {m.group(2)}s" if m else name
+
+
+def _show_frame_grid(frames: list[Path], key_prefix: str, cols_per_row: int = 3,
+                      page_size: int = 15, findings_map: dict | None = None):
+    if not frames:
+        return
+    _i18n = I18n(st.session_state.locale)
+
+    total_pages = max(1, (len(frames) + page_size - 1) // page_size)
+    page_key = f"{key_prefix}_page"
+    page = st.session_state.get(page_key, 0)
+
+    if page >= total_pages:
+        page = total_pages - 1
+        st.session_state[page_key] = page
+
+    col_prev, col_info, col_next = st.columns([1, 2, 1])
+    with col_info:
+        st.markdown(
+            f"<div style='text-align:center'><strong>{_i18n.t('page_info', page=page + 1, total=total_pages, count=len(frames))}</strong></div>",
+            unsafe_allow_html=True,
+        )
+    with col_prev:
+        if page > 0:
+            if st.button(f"◀ {_i18n.t('previous')}", key=f"{key_prefix}_prev"):
+                st.session_state[page_key] = page - 1
+                st.rerun()
+    with col_next:
+        if page < total_pages - 1:
+            if st.button(f"{_i18n.t('next')} ▶", key=f"{key_prefix}_next"):
+                st.session_state[page_key] = page + 1
+                st.rerun()
+
+    start = page * page_size
+    page_frames = frames[start:start + page_size]
+
+    for row_start in range(0, len(page_frames), cols_per_row):
+        row_frames = page_frames[row_start:row_start + cols_per_row]
+        cols = st.columns(cols_per_row)
+        for i, fp in enumerate(row_frames):
+            with cols[i]:
+                ts = _parse_timestamp(fp.stem)
+                st.caption(f"⏱ {ts}")
+                suspect_info = None
+                if findings_map:
+                    entry = findings_map.get(fp.name)
+                    if entry:
+                        suspect_info = entry
+                st.image(str(fp), use_container_width=True)
+                if suspect_info:
+                    if suspect_info.get("keywords"):
+                        for kw in suspect_info["keywords"]:
+                            st.markdown(
+                                f"<span class='keyword-badge'>{kw}</span>",
+                                unsafe_allow_html=True,
+                            )
+                    if suspect_info.get("ocr_text"):
+                        with st.expander("📝 OCR"):
+                            st.text(suspect_info["ocr_text"][:200])
+
 
 # ---------------------------------------------------------------------------
 # Sidebar
@@ -426,7 +500,8 @@ if st.session_state.batch_running and st.session_state.batch_queue:
 # ---------------------------------------------------------------------------
 if st.session_state.selected_video:
     sel = st.session_state.selected_video
-    report_path = REPORTS_DIR / f"{Path(sel).stem}_report.json"
+    stem = Path(sel).stem
+    report_path = REPORTS_DIR / f"{stem}_report.json"
 
     if report_path.exists():
         report = _load_report(report_path)
@@ -448,8 +523,38 @@ if st.session_state.selected_video:
         mc[2].metric(f"🧠 {i18n.t('analyzed_vlm')}", summary.get("suspects_found", 0))
         mc[3].metric(f"🛑 {i18n.t('infractions')}", summary.get("infractions_confirmed", 0))
 
+        st.divider()
+
+        # --- Collect frames ---
+        interim_dir = _find_frames_dir(INTERIM_BASE, stem)
+        suspects_dir = _find_frames_dir(SUSPECTS_BASE, stem)
+
+        all_frames: list[Path] = []
+        if interim_dir:
+            all_frames.extend(sorted(interim_dir.glob("*.jpg")))
+        suspect_frames: list[Path] = []
+        findings_map: dict[str, dict] = {}
+        if suspects_dir:
+            suspect_frames = sorted(suspects_dir.glob("*.jpg"))
+            all_frames.extend(suspect_frames)
+            f_json = suspects_dir / "findings.json"
+            if f_json.exists():
+                for entry in json.loads(f_json.read_text()):
+                    findings_map[Path(entry["file"]).name] = entry
+        all_frames.sort(key=lambda p: p.name)
+
+        # --- All Extracted Frames ---
+        if all_frames:
+            with st.expander(f"🎬 {i18n.t('frames_extracted')} ({len(all_frames)})", expanded=False):
+                _show_frame_grid(all_frames, f"all_{stem}", findings_map=findings_map)
+
+        # --- OCR Suspects ---
+        if suspect_frames:
+            with st.expander(f"🔍 {i18n.t('suspects_ocr')} ({len(suspect_frames)})", expanded=True):
+                _show_frame_grid(suspect_frames, f"suspect_{stem}", findings_map=findings_map)
+
+        # --- Infractions ---
         if infractions:
-            st.divider()
             st.subheader(f"🛑 {len(infractions)} {i18n.t('infractions_found')}")
             for i, inf in enumerate(infractions, 1):
                 file_path = inf.get("file", "")

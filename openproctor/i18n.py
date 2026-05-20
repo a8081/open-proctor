@@ -63,6 +63,9 @@ LOCALES: dict[str, dict[str, str]] = {
         "strat_majority": "Majority (>50%)",
         "strat_consensus": "Consensus (100%)",
         "strat_any": "Any (1+)",
+        "previous": "Previous",
+        "next": "Next",
+        "page_info": "Page {page} / {total} ({count} total)",
     },
     "es": {
         "app_title": "OpenProctor",
@@ -128,6 +131,9 @@ LOCALES: dict[str, dict[str, str]] = {
         "strat_majority": "Mayoría (>50%)",
         "strat_consensus": "Consenso (100%)",
         "strat_any": "Cualquiera (1+)",
+        "previous": "Anterior",
+        "next": "Siguiente",
+        "page_info": "Página {page} / {total} ({count} total)",
     },
 }
 

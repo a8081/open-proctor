@@ -1,1 +1,26 @@
 resources/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Data (generated)
+data/input/
+data/frames/
+data/suspicious/
+data/reports/
+data/logs/
+
+# Notebooks (checkpoints)
+notebooks/.ipynb_checkpoints/
+
+# Environment
+.venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db

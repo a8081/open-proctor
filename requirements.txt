@@ -1,0 +1,32 @@
+# Core
+numpy>=1.24.0
+Pillow>=10.0.0
+opencv-python-headless>=4.8.0
+
+# Image comparison / similarity
+scikit-image>=0.22.0
+imagehash>=4.3.0
+
+# OCR
+easyocr>=1.7.0
+
+# VLM (Ollama API client)
+httpx>=0.25.0
+
+# UI
+streamlit>=1.28.0
+python-multipart>=0.0.6
+
+# CLI
+typer>=0.9.0
+
+# Config & validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Logging
+loguru>=0.7.2
+
+# Dev / testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
